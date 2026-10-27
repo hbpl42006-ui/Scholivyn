@@ -1,0 +1,38 @@
+'use client';
+
+import Link from 'next/link';
+import { useCallback,useEffect,useState } from 'react';
+import { useParams } from 'next/navigation';
+import { ExternalLink,RotateCcw,XCircle } from 'lucide-react';
+import { ResearchWorkspace,StatusBadge } from '@/components/research-workspace';
+import { getRecommendationJob,listSavedJournals,recommendationAction,saveJournal,type RecommendationJob } from '@/lib/publishing';
+
+export default function JournalRecommendationPage(){
+  const {id}=useParams<{id:string}>(); const [job,setJob]=useState<RecommendationJob|null>(null); const [saved,setSaved]=useState<number[]>([]);
+  const [loading,setLoading]=useState(true); const [busy,setBusy]=useState(false); const [error,setError]=useState('');
+  const load=useCallback(async()=>setJob(await getRecommendationJob(id)),[id]);
+  useEffect(()=>{let live=true;void Promise.all([getRecommendationJob(id),listSavedJournals()]).then(([j,s])=>{if(live){setJob(j);setSaved(s.map(x=>x.journal.id))}}).catch(e=>setError(e instanceof Error?e.message:'Could not load recommendations')).finally(()=>{if(live)setLoading(false)});return()=>{live=false}},[id]);
+  useEffect(()=>{if(!job||!['queued','processing'].includes(job.status))return;const timer=setInterval(()=>void load().catch(e=>setError(e instanceof Error?e.message:'Could not refresh status')),3000);return()=>clearInterval(timer)},[job,load]);
+  async function action(name:'cancel'|'retry'){setBusy(true);setError('');try{setJob(await recommendationAction(id,name))}catch(e){setError(e instanceof Error?e.message:'Action failed')}finally{setBusy(false)}}
+  async function save(id:number){setBusy(true);setError('');try{await saveJournal(id);setSaved(rows=>rows.includes(id)?rows:[...rows,id])}catch(e){setError(e instanceof Error?e.message:'Could not save journal')}finally{setBusy(false)}}
+  return <ResearchWorkspace title="Journal suitability results"><div className="mb-5"><Link href="/dashboard/journals" className="text-sm font-medium text-blue-700 hover:underline">← Journal discovery</Link></div>
+    {error&&<p role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
+    {loading?<p className="rounded-xl bg-white p-6 text-sm text-slate-500">Loading journal results…</p>:!job?<p className="rounded-xl bg-white p-6 text-sm">Recommendation job not found.</p>:<>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-widest text-blue-700">Version-pinned recommendation</p><h2 className="mt-2 text-xl font-semibold text-[#102a43]">{job.original_filename}</h2><p className="mt-1 text-sm text-slate-500">{job.project_title} · revision {job.revision_number}</p></div><StatusBadge status={job.status}/></div>
+        {['queued','processing'].includes(job.status)&&<div className="mt-4"><div className="h-2 rounded-full bg-slate-100"><div className="h-2 rounded-full bg-blue-700" style={{width:`${job.progress}%`}}/></div><p className="mt-2 text-xs text-slate-500">Searching public journal metadata and scoring explainable suitability factors.</p></div>}
+        {job.error_category&&<p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">The search encountered a provider or processing issue ({job.error_category}). Saved provider results are retained. Retry resumes unfinished sources.</p>}
+        <div className="mt-4 flex gap-2">{['queued','processing'].includes(job.status)&&<button disabled={busy} onClick={()=>void action('cancel')} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"><XCircle size={15}/>Cancel</button>}{['failed','partial'].includes(job.status)&&<button disabled={busy} onClick={()=>void action('retry')} className="inline-flex items-center gap-2 rounded-lg border border-blue-300 px-3 py-2 text-sm text-blue-800"><RotateCcw size={15}/>Retry incomplete providers</button>}</div>
+      </section>
+      <section className="mt-6 space-y-4"><div><h2 className="text-lg font-semibold text-[#102a43]">Shortlist ({job.recommendations.length})</h2><p className="text-sm text-slate-500">Scores summarize available fit evidence, not acceptance likelihood. Missing data is shown as unknown.</p></div>
+        {job.recommendations.length===0&&<p className="rounded-xl border border-dashed bg-white p-6 text-sm text-slate-600">No journal records were returned for this query. Try correcting manuscript keywords or research field.</p>}
+        {job.recommendations.map((item,index)=><article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs uppercase tracking-wider text-slate-500">Candidate {index+1} · suitability {item.score}/100</p><h3 className="mt-1 text-lg font-semibold text-[#102a43]">{item.journal.name}</h3><p className="mt-1 text-sm text-slate-600">{item.journal.publisher||'Publisher unknown'} · ISSN {item.journal.issns.join(', ')||'Unknown'} · identity {item.journal.identity_status.replaceAll('_',' ')}</p></div><div className="flex gap-2">{!saved.includes(item.journal.id)&&<button disabled={busy} onClick={()=>void save(item.journal.id)} className="rounded-lg border border-blue-300 px-3 py-2 text-sm text-blue-800">Save</button>}<a href={item.journal.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm">Source <ExternalLink size={14}/></a></div></div>
+          {item.journal.discrepancies.map(text=><p key={text} className="mt-3 rounded bg-amber-50 p-2 text-sm text-amber-900">Metadata discrepancy: {text}</p>)}
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">{Object.entries(item.factors).map(([key,value])=><div key={key} className="rounded-lg bg-slate-50 p-3"><p className="text-xs font-semibold uppercase text-slate-500">{key.replaceAll('_',' ')}</p><p className="mt-1 text-sm font-medium">{value.score===null?'Unknown':`${value.score}%`}</p><p className="mt-1 text-xs text-slate-600">{value.evidence}</p></div>)}</div>
+          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3"><p>Open access: <strong>{item.journal.open_access===null?'Unknown':item.journal.open_access?'Yes':'No'}</strong></p><p>DOAJ indicator (OpenAlex): <strong>{item.journal.doaj_listed===null?'Unknown':item.journal.doaj_listed?'Listed':'Not listed'}</strong></p><p>Provider-reported activity: <strong>{item.journal.works_count===null?'Unknown':`${item.journal.works_count} works`}</strong></p></div>
+          {item.journal.website&&<p className="mt-3 text-sm">Provider-reported journal website (not independently verified): <a className="break-all text-blue-700 underline" href={item.journal.website} target="_blank" rel="noopener noreferrer">{item.journal.website}</a></p>}
+          <details className="mt-3"><summary className="cursor-pointer text-sm font-medium text-blue-800">Missing or uncertain evidence</summary><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">{item.missing_evidence.map(value=><li key={value}>{value}</li>)}</ul></details><p className="mt-3 text-xs text-slate-500">Source: {item.journal.provider} · last checked {new Date(item.journal.verified_at).toLocaleString()} · <a className="underline" href={item.journal.source_url} target="_blank" rel="noreferrer">provider record</a></p>
+        </article>)}
+      </section><p className="mt-6 text-xs text-slate-500">No impact factors, acceptance rates, APC costs, indexing claims, review timelines, or acceptance guarantees are inferred.</p>
+    </>}
+  </ResearchWorkspace>
+}

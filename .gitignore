@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+backend/db.sqlite3
+backend/db.backup-*.sqlite3
+backend/private_documents/
+backend/jwt-signing-key.local
+backend/jwt-signing-key.*.local
+frontend/node_modules/
+frontend/.next/
+frontend/.next-*/
+frontend/coverage/
+frontend/.vitest/

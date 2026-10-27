@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scholivyn}
+      POSTGRES_USER: ${POSTGRES_USER:-scholivyn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scholivyn}
+    ports: ["5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U scholivyn"], interval: 5s, timeout: 5s, retries: 10}
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  backend:
+    build: ./backend
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    volumes: ["./backend:/app"]
+    ports: ["8000:8000"]
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      PRIVATE_DOCUMENT_ROOT: /app/private_documents
+    depends_on: {db: {condition: service_healthy}, redis: {condition: service_started}}
+  worker:
+    build: ./backend
+    command: celery -A config worker --loglevel=INFO
+    volumes: ["./backend:/app"]
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      PRIVATE_DOCUMENT_ROOT: /app/private_documents
+    depends_on: {db: {condition: service_healthy}, redis: {condition: service_started}}
+  ai-worker:
+    build: ./backend
+    command: celery -A config worker --loglevel=INFO -Q ai --concurrency=2
+    user: "10001:10001"
+    volumes: ["./backend:/app"]
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      PRIVATE_DOCUMENT_ROOT: /app/private_documents
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on: {db: {condition: service_healthy}, redis: {condition: service_started}}
+  frontend:
+    build: ./frontend
+    command: npm run start -- --hostname 0.0.0.0
+    ports: ["3001:3000"]
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      DJANGO_API_URL: http://backend:8000/api/v1
+      PUBLIC_APP_ORIGIN: ${FRONTEND_URL:-http://localhost:3001}
+      WATCHPACK_POLLING: "true"
+    depends_on: [backend]
+volumes:
+  postgres_data:
